@@ -1,0 +1,200 @@
+# claude-code-web-app-bridge-skills
+
+A Claude Code skill that bridges the agent to the **claude.ai web app** via Chrome DevTools Protocol (CDP). Use it to forward questions or long coding/debugging tasks to Claude, read back real responses, and persist conversations for future reference.
+
+## What it does
+
+- Sends messages to Claude web app from within a Claude Code session
+- Reads Claude's responses back into the agent's context
+- Saves full conversations (text + artifacts + search context) as JSONL + Markdown
+- Navigates to previously saved conversations to continue them
+- Supports routing mode: toggle all messages through the bridge with `/claude start` / `/claude end`
+
+## Prerequisites
+
+- macOS with Google Chrome
+- Chrome launched with CDP on port 9222:
+  ```bash
+  /Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome \
+    --remote-debugging-port=9222 \
+    --user-data-dir=/tmp/claude-cdp-profile
+  ```
+- Logged in to claude.ai in that browser
+- Python 3
+
+## Installation
+
+```bash
+python3 -m venv .venv
+. .venv/bin/activate
+pip install -r requirements.txt
+```
+
+## Project layout
+
+```
+.claude/commands/
+  claude.md              ← /claude slash command definition
+references/
+  install.md             ← full installation and verification steps
+  bridge-patterns.md     ← context packet patterns and forwarding prompts
+  coding-modes.md        ← diagnosis / patch-plan / review / compare-options
+  validated-context.md   ← context fields proven useful in live testing
+  safety-boundaries.md   ← what should and should not be delegated
+  conversation-continuation.md  ← how to resume a saved conversation
+scripts/
+  claude_web_probe.py    ← low-level CDP bridge: probe / ask / read / navigate
+  claude_conversation_store.py  ← save current chat to conversations/
+  bridge_config.py       ← read config.json / config.example.json
+  context_packet.py      ← build structured environment context payloads
+config.json              ← bridge policy (autoBridgeAllowed, defaultMode, etc.)
+state.json               ← current routing mode and active conversation
+SKILL.md                 ← skill definition loaded by Claude Code
+```
+
+## Slash commands
+
+| Command | Effect |
+|---|---|
+| `/claude start` | Enable routing mode — all subsequent messages forwarded to Claude web app |
+| `/claude end` | Disable routing mode |
+| `/claude +<message>` | Route a single message through the bridge |
+| `/claude conversation list` | List all saved conversations |
+| `/claude conversation <name> +<message>` | Navigate to a named conversation and send a message |
+
+`<name>` supports fuzzy matching: partial title words, abbreviations, and ticker symbols all work
+(e.g. `SMCI` matches `Super Micro Computer's rise and business model`).
+
+## Key scripts
+
+### `claude_web_probe.py`
+
+Low-level CDP operations:
+
+```bash
+. .venv/bin/activate
+
+# Check page state
+python scripts/claude_web_probe.py probe
+
+# Send a message
+python scripts/claude_web_probe.py ask --question "Your question here"
+
+# Read the current page tail
+python scripts/claude_web_probe.py read
+
+# Navigate to a saved conversation
+python scripts/claude_web_probe.py navigate --chat-id <chatId>
+python scripts/claude_web_probe.py navigate --url https://claude.ai/chat/<chatId>
+```
+
+### `claude_conversation_store.py`
+
+Save the current Claude chat to `~/.ai-bridge/claude-bridge/conversations/` (outside the skills folder — survives skills updates or deletion):
+
+```bash
+python scripts/claude_conversation_store.py --export-md --project my-project
+```
+
+Output: `~/.ai-bridge/claude-bridge/conversations/{slug}--{chatId}/conversation.jsonl`, `meta.json`, `conversation.md`
+
+Re-running is safe — only new turns are appended.
+
+List or search saved conversations:
+
+```bash
+python scripts/claude_conversation_store.py --list
+python scripts/claude_conversation_store.py --find "SMCI"
+```
+
+Add searchable tags (e.g. ticker symbols or abbreviations) to a conversation:
+
+```bash
+python scripts/claude_conversation_store.py --tag 44cfba67 SMCI stock
+```
+
+Tags are stored in `meta.json` and searched by `--find`.
+
+### `context_packet.py`
+
+Build a structured environment context payload for coding/debugging tasks:
+
+```bash
+python scripts/context_packet.py \
+  --os "macOS" \
+  --repo "/path/to/repo" \
+  --app "Next.js" \
+  --command "npm run build" \
+  --error "Module not found: ..."
+```
+
+## Verification
+
+See `references/install.md` for the full step-by-step verification sequence covering:
+1. Basic probe / ask / read
+2. Save conversation to subdirectory
+3. Navigate to a saved conversation and continue it
+
+Quick smoke test:
+
+```bash
+. .venv/bin/activate
+python scripts/claude_web_probe.py probe
+python scripts/claude_web_probe.py ask --question "Reply with exactly: CLAUDE_BRIDGE_OK"
+sleep 8
+python scripts/claude_web_probe.py read
+python scripts/claude_conversation_store.py --export-md --project bridge-testing
+```
+
+## Conversation Markdown format
+
+Saved `.md` files use this structure for LLM consumption:
+
+```
+# Conversation title
+| metadata |
+
+---
+# Round 1
+## Human
+[message]
+## Assistant
+[reply]
+### Artifact: name
+```lang
+code
+```
+### Search context
+- Query: ...
+  - [source](url)
+```
+
+## config.json fields
+
+```json
+{
+  "claudeBridge": {
+    "enabled": true,
+    "autoBridgeAllowed": true,
+    "defaultMode": "diagnosis",
+    "useClaudeWeb": true,
+    "requireRealClaudeResponse": true
+  }
+}
+```
+
+- `autoBridgeAllowed` — if `true`, agent may auto-invoke bridge for long coding tasks
+- `defaultMode` — preferred mode when none specified (`diagnosis` / `patch-plan` / `review` / `compare-options`)
+- `requireRealClaudeResponse` — never present a local guess as a Claude response
+- `conversationsDir` — override where conversations are stored (default: `~/.ai-bridge/claude-bridge/conversations`)
+
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=Terry-Yuxiang/claude-code-web-app-bridge-skills&type=Date)](https://star-history.com/#Terry-Yuxiang/claude-code-web-app-bridge-skills&Date)
+
+## Important constraints
+
+- Never imply Claude answered when the bridge did not actually run
+- The automation browser must be running with `--remote-debugging-port=9222`
+- Artifact content (canvas, charts) is only accessible via the REST API, not DOM inspection
+- When acting as an AI agent: execute bash commands directly — do not invoke `/claude` via the Skill tool

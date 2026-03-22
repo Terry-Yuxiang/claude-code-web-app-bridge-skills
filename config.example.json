@@ -1,0 +1,11 @@
+{
+  "claudeBridge": {
+    "enabled": true,
+    "autoBridgeAllowed": false,
+    "defaultMode": "diagnosis",
+    "useClaudeWeb": true,
+    "useClaudeCodeWhenAvailable": true,
+    "requireRealClaudeResponse": true,
+    "conversationsDir": "~/.ai-bridge/claude-bridge/conversations"
+  }
+}
